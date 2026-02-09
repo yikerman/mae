@@ -79,9 +79,9 @@ def small_cifar10() -> MaskedAutoencoderViT:
         patch_size=4,
         in_chans=3,
         # cheap model for testing
-        depth=8,
-        embed_dim=128,
-        decoder_depth=4,
+        depth=12,
+        embed_dim=64,
+        decoder_depth=8,
         num_heads=8,
         decoder_embed_dim=64,
         decoder_num_heads=8,
