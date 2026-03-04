@@ -1,95 +1,31 @@
-from functools import partial
 from types import SimpleNamespace
 import os
 import glob
 
-import h5py
-import torch
-import torch.nn as nn
 import numpy as np
+import torch
+import joblib
 from torchvision import transforms
-from torchvision import datasets as dsets
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 import util.misc as misc
-from models_mae import MaskedAutoencoderViT
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
-import models_mae
 from engine_pretrain import train_one_epoch
-
-# Updated Statistics for [Temperature, Dfun]
-bubbleml_mean = [-48.3421, -2.7237]
-bubbleml_std = [105.0279, 2.8301]
-
-class PoolBoilingDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
-        self.transform = transform
-        self.file_paths = []
-        self.frame_counts = []
-        self.cumulative_indices = [0]
-        
-        # sorted to ensure consistent ordering
-        search_path = os.path.join(root_dir, "PoolBoiling-*", "*.hdf5")
-        self.file_paths = sorted(glob.glob(search_path))
-        
-        print(f"Indexing {len(self.file_paths)} files...")
-        total_frames = 0
-        for p in self.file_paths:
-            with h5py.File(p, 'r') as f:
-                # We assume temperature and dfun have the same length
-                count = f["temperature"].shape[0]
-                self.frame_counts.append(count)
-                total_frames += count
-                self.cumulative_indices.append(total_frames)
-        
-        print(f"Total frames indexed: {total_frames}")
-
-    def __len__(self):
-        return self.cumulative_indices[-1]
-
-    def __getitem__(self, idx):
-        # Find which file the global index belongs to
-        file_idx = 0
-        for i in range(len(self.cumulative_indices) - 1):
-            if idx < self.cumulative_indices[i+1]:
-                file_idx = i
-                break
-        
-        # Calculate local frame index within that file
-        local_idx = idx - self.cumulative_indices[file_idx]
-        file_path = self.file_paths[file_idx]
-        
-        with h5py.File(file_path, 'r') as f:
-            # Load both channels
-            temp = f["temperature"][local_idx]
-            dfun = f["dfun"][local_idx]
-            
-            # Stack along channel axis (axis 0)
-            # Resulting shape: (2, H, W)
-            # Channel 0: Temperature
-            # Channel 1: dfun
-            data = np.stack([temp, dfun], axis=0).astype('float32')
-            
-        sample = torch.from_numpy(data)
-
-        if torch.isnan(sample).any():
-            print(f"NaN detected in {file_path} at index {local_idx}")
-        
-        if self.transform:
-            sample = self.transform(sample)
-            
-        return sample, 0
+from bubbleml_common import (
+    PoolBoilingDataset,
+    small_bubbleml, ApplyQuantileTransform
+)
 
 def main():
     # configuration
     data_root = "./bubbleml-ds"
     batch_size = 256
-    epochs = 48
+    epochs = 64
     mask_ratio = 0.75
     lr = 1e-4
     weight_decay = 0.1
     checkpoint_dir = "checkpoints"
+    qt_path = "quantile_transform.joblib"
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -99,11 +35,9 @@ def main():
     seed = 3648
     torch.manual_seed(seed)
     np.random.seed(seed)
-
-    normalize = transforms.Normalize(mean=bubbleml_mean, std=bubbleml_std)
     
     transform_train = transforms.Compose([
-        normalize,
+        ApplyQuantileTransform(qt_path),
     ])
 
     train_set = PoolBoilingDataset(root_dir=data_root, transform=transform_train)
@@ -125,34 +59,22 @@ def main():
 
     start_epoch = 0
 
-    # --- Resume from Checkpoint Logic ---
+    # resume from checkpoint
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_epoch*.pth"))
     if checkpoint_files:
-        # Sort files by epoch number
         checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
         latest_checkpoint = checkpoint_files[-1]
-        
         print(f"Found checkpoint: {latest_checkpoint}. Resuming...")
         checkpoint = torch.load(latest_checkpoint, map_location='cpu')
-        
-        if isinstance(checkpoint, dict) and 'model' in checkpoint:
-            model.load_state_dict(checkpoint['model'])
-            if 'optimizer' in checkpoint:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            if 'scaler' in checkpoint:
-                scaler.load_state_dict(checkpoint['scaler'])
-            if 'epoch' in checkpoint:
-                start_epoch = checkpoint['epoch'] + 1
-            print(f"Successfully loaded full state. Resuming from epoch {start_epoch}.")
-        else:
-            model.load_state_dict(checkpoint)
-            start_epoch = int(os.path.basename(latest_checkpoint).split('epoch')[1].split('.pth')[0])
-            print(f"Warning: Loaded old format checkpoint. Resuming from epoch {start_epoch}.")
-            
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scaler.load_state_dict(checkpoint['scaler'])
+        start_epoch = checkpoint['epoch'] + 1
+        print(f"Successfully loaded full state. Resuming from epoch {start_epoch}.")            
     else:
         print("No checkpoints found. Starting training from scratch.")
 
-    # --- Training Loop ---
+    # training
     for epoch in range(start_epoch, epochs):
         train_stats = train_one_epoch(
             model, train_loader,
@@ -163,7 +85,7 @@ def main():
                         'epoch': epoch,}
         print(log_stats)
         
-        # Save comprehensive checkpoint
+        # save checkpoint
         save_path = os.path.join(checkpoint_dir, f"bubbleml_mae_2ch_epoch{epoch+1}.pth")
         save_dict = {
             'model': model.state_dict(),
@@ -174,17 +96,6 @@ def main():
         }
         torch.save(save_dict, save_path)
         print(f"Checkpoint saved to {save_path}")
-
-
-def small_bubbleml() -> MaskedAutoencoderViT:
-    return models_mae.MaskedAutoencoderViT(
-        img_size=64,
-        patch_size=8,
-        in_chans=2,
-        depth=12, embed_dim=512, num_heads=8,
-        decoder_depth=8, decoder_num_heads=16, decoder_embed_dim=512,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),
-    )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import glob
 
 import numpy as np
 import torch
+import joblib
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
@@ -11,20 +12,20 @@ import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from engine_pretrain import train_one_epoch
 from bubbleml_common import (
-    bubbleml_mean, bubbleml_std,
     PoolBoilingDataset,
-    small_bubbleml,
+    small_bubbleml, ApplyQuantileTransform
 )
 
 def main():
     # configuration
     data_root = "./bubbleml-ds"
     batch_size = 256
-    epochs = 48
+    epochs = 64
     mask_ratio = 0.75
     lr = 1e-4
     weight_decay = 0.1
     checkpoint_dir = "checkpoints"
+    qt_path = "quantile_transform.joblib"
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -34,11 +35,9 @@ def main():
     seed = 3648
     torch.manual_seed(seed)
     np.random.seed(seed)
-
-    normalize = transforms.Normalize(mean=bubbleml_mean, std=bubbleml_std)
     
     transform_train = transforms.Compose([
-        normalize,
+        ApplyQuantileTransform(qt_path),
     ])
 
     train_set = PoolBoilingDataset(root_dir=data_root, transform=transform_train)
@@ -60,34 +59,22 @@ def main():
 
     start_epoch = 0
 
-    # --- Resume from Checkpoint Logic ---
+    # resume from checkpoint
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_epoch*.pth"))
     if checkpoint_files:
-        # Sort files by epoch number
         checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
         latest_checkpoint = checkpoint_files[-1]
-        
         print(f"Found checkpoint: {latest_checkpoint}. Resuming...")
         checkpoint = torch.load(latest_checkpoint, map_location='cpu')
-        
-        if isinstance(checkpoint, dict) and 'model' in checkpoint:
-            model.load_state_dict(checkpoint['model'])
-            if 'optimizer' in checkpoint:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            if 'scaler' in checkpoint:
-                scaler.load_state_dict(checkpoint['scaler'])
-            if 'epoch' in checkpoint:
-                start_epoch = checkpoint['epoch'] + 1
-            print(f"Successfully loaded full state. Resuming from epoch {start_epoch}.")
-        else:
-            model.load_state_dict(checkpoint)
-            start_epoch = int(os.path.basename(latest_checkpoint).split('epoch')[1].split('.pth')[0])
-            print(f"Warning: Loaded old format checkpoint. Resuming from epoch {start_epoch}.")
-            
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scaler.load_state_dict(checkpoint['scaler'])
+        start_epoch = checkpoint['epoch'] + 1
+        print(f"Successfully loaded full state. Resuming from epoch {start_epoch}.")            
     else:
         print("No checkpoints found. Starting training from scratch.")
 
-    # --- Training Loop ---
+    # training
     for epoch in range(start_epoch, epochs):
         train_stats = train_one_epoch(
             model, train_loader,
@@ -98,7 +85,7 @@ def main():
                         'epoch': epoch,}
         print(log_stats)
         
-        # Save comprehensive checkpoint
+        # save checkpoint
         save_path = os.path.join(checkpoint_dir, f"bubbleml_mae_2ch_epoch{epoch+1}.pth")
         save_dict = {
             'model': model.state_dict(),
