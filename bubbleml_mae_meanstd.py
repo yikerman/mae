@@ -11,21 +11,19 @@ from torch.utils.data import DataLoader
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from engine_pretrain import train_one_epoch
-from bubbleml_common import (
-    PoolBoilingDataset,
-    small_bubbleml, ApplyQuantileTransform
-)
+from bubbleml_common import PoolBoilingDataset, small_bubbleml, bubbleml_mean, bubbleml_std
 
 def main():
     # configuration
     data_root = "./bubbleml-ds"
-    batch_size = 256
-    epochs = 64
+    batch_size = 512
+    epochs = 128
     mask_ratio = 0.75
-    lr = 1e-4
-    weight_decay = 0.1
+    lr = 1e-5
+    weight_decay = 0.05
     checkpoint_dir = "checkpoints"
     qt_path = "quantile_transform.joblib"
+    filename_base = "bubbleml_mae_2ch_meanstd_epoch"
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -37,7 +35,7 @@ def main():
     np.random.seed(seed)
     
     transform_train = transforms.Compose([
-        ApplyQuantileTransform(qt_path),
+        transforms.Normalize(mean=bubbleml_mean, std=bubbleml_std),
     ])
 
     train_set = PoolBoilingDataset(root_dir=data_root, transform=transform_train)
@@ -60,7 +58,7 @@ def main():
     start_epoch = 0
 
     # resume from checkpoint
-    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_epoch*.pth"))
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, f"{filename_base}*.pth"))
     if checkpoint_files:
         checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
         latest_checkpoint = checkpoint_files[-1]
@@ -86,7 +84,7 @@ def main():
         print(log_stats)
         
         # save checkpoint
-        save_path = os.path.join(checkpoint_dir, f"bubbleml_mae_2ch_epoch{epoch+1}.pth")
+        save_path = os.path.join(checkpoint_dir, f"{filename_base}{epoch+1}.pth")
         save_dict = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),

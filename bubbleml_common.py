@@ -12,8 +12,8 @@ from models_mae import MaskedAutoencoderViT
 import models_mae
 
 # [temp, dfun]
-# bubbleml_mean = [-48.3421, -2.7237]
-# bubbleml_std = [105.0279, 2.8301]
+bubbleml_mean = [-48.3421, -2.7237]
+bubbleml_std = [105.0279, 2.8301]
 
 
 class PoolBoilingDataset(torch.utils.data.Dataset):
@@ -75,6 +75,7 @@ class PoolBoilingDataset(torch.utils.data.Dataset):
                 f.close()
 
 def small_bubbleml() -> MaskedAutoencoderViT:
+    """1/8 compression"""
     return models_mae.MaskedAutoencoderViT(
         img_size=64,
         patch_size=8,
@@ -83,6 +84,18 @@ def small_bubbleml() -> MaskedAutoencoderViT:
         decoder_depth=8, decoder_num_heads=16, decoder_embed_dim=512,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
     )
+
+def medium_bubbleml() -> MaskedAutoencoderViT:
+    """1/4 compression"""
+    return models_mae.MaskedAutoencoderViT(
+        img_size=64,
+        patch_size=8,
+        in_chans=2,
+        depth=10, embed_dim=1024, num_heads=8,
+        decoder_depth=8, decoder_num_heads=16, decoder_embed_dim=512,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+    )
+
 
 class ApplyQuantileTransform:
     """Normalize: Tensor (2, H, W) -> Normalized Tensor (2, H, W)"""
@@ -121,3 +134,76 @@ class DenormalizeQuantile:
         if not is_batch:
             return unnormed_tensor[0]
         return unnormed_tensor
+
+# todo: remove dupe
+
+def load_latest_med_model(checkpoint_dir, device):
+    model = medium_bubbleml().to(device)
+    model.eval()
+    
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_med_epoch*.pth"))
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        
+    checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
+    latest_checkpoint = checkpoint_files[-1]
+    print(f"Loading checkpoint: {latest_checkpoint}")
+    
+    checkpoint = torch.load(latest_checkpoint, map_location=device)
+    model.load_state_dict(checkpoint['model'])
+
+    return model
+
+def load_latest_small_model(checkpoint_dir, device):
+    model = small_bubbleml().to(device)
+    model.eval()
+    
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_epoch*.pth"))
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        
+    checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
+    latest_checkpoint = checkpoint_files[-1]
+    print(f"Loading checkpoint: {latest_checkpoint}")
+    
+    checkpoint = torch.load(latest_checkpoint, map_location=device)
+    model.load_state_dict(checkpoint['model'])
+
+    return model
+
+def load_latest_meanstd_model(checkpoint_dir, device):
+    model = small_bubbleml().to(device)
+    model.eval()
+    
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "bubbleml_mae_2ch_meanstd_epoch*.pth"))
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        
+    checkpoint_files.sort(key=lambda x: int(os.path.basename(x).split('epoch')[1].split('.pth')[0]))
+    latest_checkpoint = checkpoint_files[-1]
+    print(f"Loading checkpoint: {latest_checkpoint}")
+    
+    checkpoint = torch.load(latest_checkpoint, map_location=device)
+    model.load_state_dict(checkpoint['model'])
+
+    return model
+
+
+def run_mae_inference(model, x, mask_ratio):
+    """
+    Runs inference on the MAE model, unpatchifies the prediction, 
+    and formats the mask for visual reconstruction.
+    """
+    with torch.no_grad():
+        loss, y, mask = model(x.float(), mask_ratio=mask_ratio)
+        y_unpatchified = model.unpatchify(y)
+    
+        # Process mask for visualization/pasting
+        p = model.patch_embed.patch_size[0]
+        mask_vis = mask.detach()
+        # Assumes 2 channels (temp and dfun) based on p**2 * 2
+        mask_vis = mask_vis.unsqueeze(-1).repeat(1, 1, p**2 * 2) 
+        mask_vis = model.unpatchify(mask_vis)
+        
+    return loss, y_unpatchified, mask_vis
+
