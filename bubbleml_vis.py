@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from bubbleml_common import PoolBoilingDataset, medium_bubbleml, ApplyQuantileTransform, DenormalizeQuantile, load_latest_model, run_mae_inference
+from bubbleml_common import PoolBoilingDataset, medium_bubbleml, ApplyQuantileTransform, DenormalizeQuantile, load_latest_small_model, run_mae_inference
 
 def save_monochrome_image(arr_2d, filename):
     """Saves a 2D numpy array as a grayscale image, auto-scaling min/max."""
@@ -27,7 +27,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     mask_ratio = 0.75
 
-    model = load_latest_model(checkpoint_dir, device)
+    model = load_latest_small_model(checkpoint_dir, device)
 
     norm_transform = ApplyQuantileTransform(qt_path)
     denormalizer = DenormalizeQuantile(qt_path)

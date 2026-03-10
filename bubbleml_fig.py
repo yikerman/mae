@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from torchvision import transforms
 
-from bubbleml_common import PoolBoilingDataset, ApplyQuantileTransform, DenormalizeQuantile, load_latest_med_model, run_mae_inference
+from bubbleml_common import PoolBoilingDataset, ApplyQuantileTransform, DenormalizeQuantile, load_latest_small_model, run_mae_inference
 
 def plot_n_temp_frames(temp_targets, temp_preds, masks, n, save_path="temp_comparison_n.png"):
     """
@@ -67,7 +67,7 @@ def main():
     
     n_samples = 5
 
-    model = load_latest_med_model(checkpoint_dir, device)
+    model = load_latest_small_model(checkpoint_dir, device)
     model.eval()
 
     dataset = PoolBoilingDataset(
@@ -96,7 +96,7 @@ def main():
     temp_preds = im_paste[:, 0].detach().cpu().numpy()
     masks = mask_vis_batch[:, 0].detach().cpu().numpy()
 
-    save_filename = f"plot_med.png"
+    save_filename = f"plot_small.png"
     plot_n_temp_frames(temp_targets, temp_preds, masks, n=n_samples, save_path=save_filename)
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ def main():
     batch_size = 512
     epochs = 128
     mask_ratio = 0.75
-    lr = 1e-6
+    lr = 1e-5
     weight_decay = 0.05
     checkpoint_dir = "checkpoints"
     qt_path = "quantile_transform.joblib"

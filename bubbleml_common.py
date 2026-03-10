@@ -82,7 +82,7 @@ def small_bubbleml() -> MaskedAutoencoderViT:
         in_chans=2,
         depth=12, embed_dim=512, num_heads=8,
         decoder_depth=8, decoder_num_heads=16, decoder_embed_dim=512,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), norm_pix_loss=True,
     )
 
 def medium_bubbleml() -> MaskedAutoencoderViT:
@@ -93,7 +93,7 @@ def medium_bubbleml() -> MaskedAutoencoderViT:
         in_chans=2,
         depth=10, embed_dim=1024, num_heads=8,
         decoder_depth=8, decoder_num_heads=16, decoder_embed_dim=512,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), norm_pix_loss=True,
     )
 
 
